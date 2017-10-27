@@ -5,10 +5,12 @@ from OpenGL.GLUT import *
 from OpenGL.GLU import *
 import sys
 import math
+from random import random
 
 #  from pyquaternion import Quaternion    ## would be useful for 3D simulation
 
 import numpy as np
+np.set_printoptions(precision=3)
 
 window = 0  # number of the glut window
 theta = 0.0
@@ -18,7 +20,11 @@ simRun = True
 RAD_TO_DEG = 180.0 / 3.1416
 G = -9.8
 initial_energy = 0
-potential_energy_ground_height = -0.5
+dampling = True
+dampling_energy = 0
+pivot_posn = np.array([0, 0, 0])
+potential_energy_ground_height = -1
+number_of_links = 5
 
 
 #####################################################
@@ -27,6 +33,7 @@ potential_energy_ground_height = -0.5
 
 class Link:
 
+    index = 0
     color = [0, 0, 0]  # # draw color
     size = [1, 1, 1]  # # dimensions
     mass = 1.0  # # mass in kg
@@ -36,6 +43,11 @@ class Link:
     posn = np.array([0.0, 0.0, 0.0])  # # 3D position (keep z=0 for 2D)
     vel = np.array([0.0, 0.0, 0.0])
 
+    acc = np.array([0, 0, 0])
+    omega_dot = 0
+
+    def __init__(self, index=0):
+        self.index = index
     def kinetic_energy(self):
         return 0.5 * (self.mass * np.linalg.norm(self.vel) ** 2 + self.inertia() * np.linalg.norm(self.omega) ** 2)
     def potential_energy(self):
@@ -55,6 +67,30 @@ class Link:
         glColor3f(self.color[0], self.color[1], self.color[2])  # # set colour
         DrawCube()  # # draw a scaled cube
         glPopMatrix()  # # restore old coord frame
+    def trail_posn(self):
+        return self.posn + self.radius() * np.array([np.cos(self.theta + 1.5 * math.pi), np.sin(self.theta + 1.5 * math.pi), 0])
+    def trail_vel(self):
+        return np.array([self.vel[0] - self.radius() * self.omega * np.sin(self.theta + math.pi * 1.5), self.vel[1] + links[0].radius() * self.omega * np.cos(self.theta + math.pi * 1.5), 0])
+    def trail_acc(self):
+        return np.array([self.acc[0] - self.radius() * self.omega_dot * np.sin(self.theta + math.pi * 1.5), self.acc[1] + self.radius() * self.omega_dot * np.cos(self.theta + math.pi * 1.5), 0])
+    def head_posn(self):
+        return self.posn + self.radius() * np.array([np.cos(self.theta + 0.5 * math.pi), np.sin(self.theta + 0.5 * math.pi), 0])
+    def correct_head(self, posn_expected, vel_expected, acc_expected):
+        global dT
+        # correction for constrained point (fix point)
+        posn_real = np.array([self.posn[0] + self.radius() * np.cos(self.theta + math.pi / 2), self.posn[1] + self.radius() * np.sin(self.theta + math.pi / 2), 0])
+        vel_real = np.array([self.vel[0] - self.radius() * self.omega * np.sin(self.theta + math.pi / 2), self.vel[1] + links[0].radius() * self.omega * np.cos(self.theta + math.pi / 2), 0])
+        acc_real = np.array([self.acc[0] - self.radius() * self.omega_dot * np.sin(self.theta + math.pi / 2), self.acc[1] + self.radius() * self.omega_dot * np.cos(self.theta + math.pi / 2), 0])
+        acc_correct = 50 * (posn_expected - posn_real) + 8 * (vel_expected - vel_real)# * abs(vel_expected - vel_real)
+        self.vel += acc_correct * dT
+    def r_head_x(self):
+        return np.cos(self.theta + math.pi / 2) * self.radius()
+    def r_head_y(self):
+        return np.sin(self.theta + math.pi / 2) * self.radius()
+    def r_trail_x(self):
+        return np.cos(self.theta + math.pi * 1.5) * self.radius()
+    def r_trail_y(self):
+        return np.sin(self.theta + math.pi * 1.5) * self.radius()
 
 
 #####################################################
@@ -63,7 +99,8 @@ class Link:
 
 def main():
     global window
-    global link1, link2
+    global links
+    global number_of_links
     glutInit(sys.argv)
     glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH)  # display mode
     glutInitWindowSize(640, 480)  # window size
@@ -78,8 +115,7 @@ def main():
     glutKeyboardFunc(keyPressed)  # register the function to call when keyboard is pressed
     InitGL(640, 480)  # initialize window
 
-    link1 = Link()
-    link2 = Link()
+    links = [Link(i) for i in range(number_of_links)]
 
     global kinetic_link, potential_link
     kinetic_link = Link()
@@ -95,44 +131,53 @@ def main():
 #####################################################
 
 def resetSim():
-    global link1, link2
+    global links
     global simTime, simRun
     global initial_energy
+    global pivot_posn
+    global potential_energy_ground_height
 
     printf('Simulation reset\n')
     simRun = True
     simTime = 0
 
-    link1.size = [0.04, 1.0, 0.12]
-    link1.color = [1, 0.9, 0.9]
-    link1.posn = np.array([0.0, 0.0, 0.0])
-    link1.vel = np.array([0.0, 0.0, 0.0])
-    link1.theta = math.pi / 4
-    link1.omega = 0  # # radians per second
+    links[0].size = [0.04, 1.0, 0.12]
+    links[0].color = [random(), random(), random()]
+    links[0].posn = np.array([0.0, 0.5 * len(links) * links[0].size[1], 0.0])
+    links[0].vel = np.array([0.0, 0.0, 0.0])
+    links[0].theta = math.pi / 4
+    links[0].omega = 0
+    pivot_posn = links[0].head_posn()
+    potential_energy_ground_height = links[0].head_posn()[1] - 0.55 * links[0].size[1]
 
-    link2.size = [0.04, 1.0, 0.12]
-    link2.color = [0.9, 0.9, 1.0]
-    link2.posn = np.array([1.0, 0.0, 0.0])
-    link2.vel = np.array([0.0, 4.0, 0.0])
-    link2.theta = -0.2
-    link2.omega = 0  # # radians per second
+    for i, list in enumerate(links):
+        if i == 0:
+            continue
+        links[i].size = [0.04, 1.0, 0.12]
+        links[i].color = [random(), random(), random()]
+        links[i].vel = np.array([0.0, 0.0, 0.0])
+        links[i].theta = math.pi / 4
+        links[i].omega = 0
+        links[i].posn = links[i - 1].trail_posn() + links[i - 1].trail_posn() - links[i - 1].posn
+        potential_energy_ground_height = potential_energy_ground_height - 0.5 * links[i].size[1]
 
-    initial_energy = link1.kinetic_energy() + link1.potential_energy()
+    initial_energy = sum([link.kinetic_energy() + link.potential_energy() for link in links])
 
 def calEnergy():
-    global kinetic_link, potential_link
+    global kinetic_link, potential_link, links,initial_energy
     kinetic_link.color = [1, 0.0, 0.0]
     potential_link.color = [0, 1, 0.0]
-    kinetic_energy = link1.kinetic_energy()
-    potential_energy = link1.potential_energy()
-    kinetic_link.size = [0.04, kinetic_energy * 0.1, 0.12]
-    potential_link.size = [0.04, potential_energy * 0.1, 0.12]
-    bar_link_origin = np.array([0.0, 0.0, 0.0])
-    potential_link.posn = np.array([1.0, 0.0, 0.0]) + np.array([0, potential_link.size[1] / 2, 0])
-    kinetic_link.posn = np.array([1.0, 0.0, 0.0]) + np.array([0, potential_link.size[1] + kinetic_link.size[1] / 2, 0])
-
-    total_energy = potential_energy + kinetic_energy
-    link1.calibrate_energy(initial_energy / total_energy)
+    kinetic_energy = sum([link.kinetic_energy() for link in links])
+    potential_energy = sum([link.potential_energy() for link in links])
+    scale = 1 / initial_energy
+    kinetic_link.size = [0.4, kinetic_energy * scale, 0.12]
+    potential_link.size = [0.4, potential_energy * scale, 0.12]
+    bar_link_origin = np.array([len(links) - 1, 0.0, 0.0])
+    potential_link.posn = bar_link_origin + np.array([0, potential_link.size[1] / 2, 0])
+    kinetic_link.posn = bar_link_origin + np.array([0, potential_link.size[1] + kinetic_link.size[1] / 2, 0])
+    total_energy = potential_energy + kinetic_energy + dampling_energy
+    print((potential_energy, kinetic_energy, dampling_energy))
+    [link.calibrate_energy(initial_energy / total_energy) for link in links]
 
 #####################################################
 #### keyPressed():  called whenever a key is pressed
@@ -169,71 +214,88 @@ def keyPressed(key, x, y):
 
 def SimWorld():
     global simTime, dT, simRun
-    global link1, link2
+    global pivot_posn
+    global links
+    global dampling_energy
+    global dampling
 
     deltaTheta = 2.4
     if simRun == False:  # # is simulation stopped?
         return
 
-            # ### solve for the equations of motion (simple in this case!)
 
-    acc1 = np.array([0, -10, 0])  # ## linear acceleration = [0, -G, 0]
-    acc2 = np.array([0, -10, 0])  # ## linear acceleration = [0, -G, 0]
-    omega_dot1 = 0.0  # ## assume no angular acceleration
-    omega_dot2 = 0.0  # ## assume no angular acceleration
+    rx = np.cos(links[0].theta + math.pi / 2) * links[0].radius()
+    ry = np.sin(links[0].theta + math.pi / 2) * links[0].radius()
+    a = np.zeros((5 * len(links), 5 * len(links)))
+    b = np.zeros(5 * len(links))
+    for i, link in enumerate(links):
+        a[i * 3, i * 3] = link.mass
+        a[i * 3 + 1, i * 3 + 1] = link.mass
+        a[i * 3 + 2, i * 3 + 2] = link.inertia()
+        b[i * 3: i * 3  + 3] = np.array(
+            [0,
+             link.mass * G,
+             0])
+    a[len(links) * 3:len(links) * 3 + 2, 0:3] = np.array(
+        [[-1, 0, links[0].r_head_y()],
+         [0, -1, -links[0].r_head_x()]])
+    b[len(links) * 3:len(links) * 3 + 2] = np.array(
+        [-links[0].omega * links[0].omega * links[0].r_head_x(),
+         -links[0].omega ** 2 * links[0].r_head_y()])
+    for i, link in enumerate(links):
+        if i == 0:
+            continue
+        a[len(links) * 3 + i * 2:len(links) * 3 + i * 2 + 2, i * 3 - 3: i * 3 + 3] = np.array(
+            [[-1, 0, links[i - 1].r_trail_y(), 1, 0, -link.r_head_y()],
+             [0, -1, -links[i - 1].r_trail_x(), 0, 1, link.r_head_x()]])
+        b[len(links) * 3 + i * 2:len(links) * 3 + i * 2 + 2] = np.array(
+            [-links[i - 1].omega * links[i - 1].omega * links[i - 1].r_trail_x() + link.omega * link.omega * link.r_head_x(),
+             -links[i - 1].omega ** 2 * links[i - 1].r_trail_y() + link.omega ** 2 * link.r_head_y()])
+    for row in range(np.shape(a)[0]):
+        for col in range(row + 1, np.shape(a)[1]):
+            a[row, col] = a[col, row]
 
-            # ###  for the constrained one-link pendulum, and the 4-link pendulum,
-            # ###  you will want to build the equations of motion as a linear system, and then solve that.
-            # ###  Here is a simple example of using numpy to solve a linear system.
-
-    rx = np.cos(link1.theta + math.pi / 2) * link1.radius()
-    ry = np.sin(link1.theta + math.pi / 2) * link1.radius()
-    a = np.array(
-        [[link1.mass, 0, 0, -1, 0],
-         [0, link1.mass, 0, 0, -1],
-         [0, 0, link1.inertia(), ry, -rx],
-         [-1, 0, ry, 0, 0],
-         [0, -1, -rx, 0, 0]])
-    b = np.array(
-        [0,
-         link1.mass * G,
-         0,
-         -link1.omega * link1.omega * rx,
-         -link1.omega * link1.omega * ry])
-    x = np.linalg.solve(a, b)
-    acc1 = np.array([x[0], x[1], 0])
-    omega_dot1 = x[2]  # ## assume no angular acceleration
-    # print(x)   # [ -2.17647059  53.54411765  56.63235294]
-            # ### explicit Euler integration to update the state
-
-    link1.posn += link1.vel * dT
-    link1.vel += acc1 * dT
-    link1.theta += link1.omega * dT
-    link1.omega += omega_dot1 * dT
-
-    # correction for constrained point (fix point)
-    posn_expected = np.array([link1.radius() * np.cos(math.pi * 0.75), link1.radius() * np.sin(math.pi * 0.75), 0])
-    vel_expected = np.array([0, 0, 0])
-    acc_expected = np.array([0, 0, 0])
-    posn_real = np.array([link1.posn[0] + link1.radius() * np.cos(link1.theta + math.pi / 2), link1.posn[1] + link1.radius() * np.sin(link1.theta + math.pi / 2), 0])
-    vel_real = np.array([link1.vel[0] - link1.radius() * link1.omega * np.sin(link1.theta + math.pi / 2), link1.vel[1] + link1.radius() * link1.omega * np.cos(link1.theta + math.pi / 2), 0])
-    acc_real = np.array([acc1[0] - link1.radius() * omega_dot1 * np.sin(link1.theta + math.pi / 2), acc1[1] + link1.radius() * omega_dot1 * np.cos(link1.theta + math.pi / 2), 0])
     
-    acc_correct = 3 * (posn_expected - posn_real) + 5 * (vel_expected - vel_real)
-    link1.vel += acc_correct * dT
-    print(posn_expected - posn_real)
-    print(vel_expected - vel_real)
+    x = np.linalg.solve(a, b)
+    for i, link in enumerate(links):
+        link.acc = np.array([x[i * 3], x[i * 3 + 1], 0])
+        link.omega_dot = x[i * 3 + 2]
+
+    calEnergy()
 
 
-    # link2.posn += link2.vel * dT
-    # link2.vel += acc2 * dT
-    link2.theta = 3.1415926 / 6
-    link2.omega += omega_dot2 * dT
-
+    for i, link in enumerate(links):
+        links[i     ].color = [random(), random(), random()]
+        links[i].posn += links[i].vel * dT
+        links[i].vel += links[i].acc * dT
+        links[i].theta += links[i].omega * dT
+        omega_without_dampling = links[i].omega + links[i].omega_dot * dT
+        if dampling:
+            # dampling
+            k_d = 0.08
+            links[i].omega_dot -= (k_d * links[i].omega / links[i].inertia())
+            omega_with_dampling = links[i].omega + links[i].omega_dot * dT
+            dampling_energy += 0.5 * links[i].inertia() * (np.linalg.norm(omega_without_dampling) ** 2 - np.linalg.norm(omega_with_dampling) ** 2)
+            links[i].omega = omega_with_dampling
+        else:
+            links[i].omega = omega_without_dampling
+        # prevent extremely fast when there are many links (> 20)
+        if links[i].omega > 10:
+            links[i].omega = 10
+        if links[i].omega_dot > 10:
+            links[i].omega_dot = 10
+        if links[i].omega < -10:
+            links[i].omega = -10
+        if links[i].omega_dot < -10:
+            links[i].omega_dot = -10
+        if i == 0:
+            links[0].correct_head(pivot_posn, np.array([0, 0, 0]), np.array([0, 0, 0]))
+        else:
+            links[i].correct_head(links[i - 1].trail_posn(), links[i - 1].trail_vel(), links[i - 1].trail_acc())
+    
     simTime += dT
 
             # ### draw the updated state
-    calEnergy()
     DrawWorld()
     printf('simTime=%.2f\n', simTime)
 
@@ -243,18 +305,17 @@ def SimWorld():
 #####################################################
 
 def DrawWorld():
-    global link1, link2, kinetic_link, potential_link
+    global links, kinetic_link, potential_link
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # Clear The Screen And The Depth Buffer
     glLoadIdentity()
     gluLookAt(
-        1, 1, 5, # eyeX, eyeY, eyeZ
+        1, 3, round(len(links) * 2), # eyeX, eyeY, eyeZ
         0, 0, 0, # centerX, centerY, centerZ
         0, 1, 0,) # upX, upY, upZ
 
     DrawOrigin()
-    link1.draw()
-    # link2.draw()
+    [link.draw() for link in links]
     kinetic_link.draw()
     potential_link.draw()
 
@@ -304,19 +365,19 @@ def DrawOrigin():
     glColor3f(1, 0.5, 0.5)  # # light red x-axis
     glBegin(GL_LINES)
     glVertex3f(0, 0, 0)
-    glVertex3f(1, 0, 0)
+    glVertex3f(4, 0, 0)
     glEnd()
 
     glColor3f(0.5, 1, 0.5)  # # light green y-axis
     glBegin(GL_LINES)
     glVertex3f(0, 0, 0)
-    glVertex3f(0, 1, 0)
+    glVertex3f(0, 4, 0)
     glEnd()
 
     glColor3f(0.5, 0.5, 1)  # # light blue z-axis
     glBegin(GL_LINES)
     glVertex3f(0, 0, 0)
-    glVertex3f(0, 0, 1)
+    glVertex3f(0, 0, 4)
     glEnd()
 
 

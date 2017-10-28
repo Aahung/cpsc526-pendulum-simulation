@@ -119,7 +119,7 @@ def main():
     glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH)  # display mode
     glutInitWindowSize(640, 480)  # window size
     glutInitWindowPosition(0, 0)  # window coords for mouse start at top-left
-    window = glutCreateWindow('CPSC 526 Simulation Template')
+    window = glutCreateWindow('CPSC 526 Simulation 2D (Sam)')
     glutDisplayFunc(DrawWorld)  # register the function to draw the world
 
     glutIdleFunc(SimWorld)  # when doing nothing, redraw the scene

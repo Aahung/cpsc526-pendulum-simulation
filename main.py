@@ -17,14 +17,18 @@ theta = 0.0
 simTime = 0
 dT = 0.01
 simRun = True
-RAD_TO_DEG = 180.0 / 3.1416
+RAD_TO_DEG = 180.0 / math.pi
 G = -9.8
 initial_energy = 0
+
 dampling = True
+maintaining_energy = True
+has_ground_force = True
+
 dampling_energy = 0
 pivot_posn = np.array([0, 0, 0])
 potential_energy_ground_height = -1
-number_of_links = 5
+number_of_links = 4
 
 
 #####################################################
@@ -93,14 +97,24 @@ class Link:
         return np.sin(self.theta + math.pi * 1.5) * self.radius()
 
 
+def print_status():
+    global dampling, maintaining_energy, has_ground_force
+    translation = {True: 'On', False: 'Off'}
+    print(
+'''======================================================
+Multiple Link Pendulum Simulator USAGE
+======================================================
+[R] Reset simulation    | [Q Esc] Exit          | [Space] Pause
+[A] Add a link          | [S] Remove a link     | [D] Switch Dumpling (current: %s)
+[E] Switch energy perserving (current %s)       | [G] Switch ground plane (current: %s)
+''' % (translation[dampling], translation[maintaining_energy], translation[has_ground_force]))
+
 #####################################################
 #### main():   launches app
 #####################################################
 
 def main():
     global window
-    global links
-    global number_of_links
     glutInit(sys.argv)
     glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH)  # display mode
     glutInitWindowSize(640, 480)  # window size
@@ -108,23 +122,28 @@ def main():
     window = glutCreateWindow('CPSC 526 Simulation Template')
     glutDisplayFunc(DrawWorld)  # register the function to draw the world
 
-        # glutFullScreen()               # full screen
-
     glutIdleFunc(SimWorld)  # when doing nothing, redraw the scene
     glutReshapeFunc(ReSizeGLScene)  # register the function to call when window is resized
     glutKeyboardFunc(keyPressed)  # register the function to call when keyboard is pressed
     InitGL(640, 480)  # initialize window
 
+    createObjects()
+    resetSim()
+    print_status()
+
+    glutMainLoop()  # start event processing loop
+
+def createObjects():
+    global links
+    global number_of_links
     links = [Link(i) for i in range(number_of_links)]
 
     global kinetic_link, potential_link
     kinetic_link = Link()
     potential_link = Link()
 
-    resetSim()
-
-    glutMainLoop()  # start event processing loop
-
+    global ground_link
+    ground_link = Link()
 
 #####################################################
 #### keyPressed():  called whenever a key is pressed
@@ -133,7 +152,7 @@ def main():
 def resetSim():
     global links
     global simTime, simRun
-    global initial_energy
+    global initial_energy, dampling_energy
     global pivot_posn
     global potential_energy_ground_height
 
@@ -162,9 +181,14 @@ def resetSim():
         potential_energy_ground_height = potential_energy_ground_height - 0.5 * links[i].size[1]
 
     initial_energy = sum([link.kinetic_energy() + link.potential_energy() for link in links])
+    dampling_energy = 0
+
+    ground_link.size = [10, 0.1, 10]
+    ground_link.color = [1.0, 1.0, 1.0]
+    ground_link.posn = np.array([0, potential_energy_ground_height - max(len(links[1:]), 2) * links[0].size[1] / 2, 0])
 
 def calEnergy():
-    global kinetic_link, potential_link, links,initial_energy
+    global kinetic_link, potential_link, links, initial_energy, dampling_energy, maintaining_energy
     kinetic_link.color = [1, 0.0, 0.0]
     potential_link.color = [0, 1, 0.0]
     kinetic_energy = sum([link.kinetic_energy() for link in links])
@@ -172,12 +196,13 @@ def calEnergy():
     scale = 1 / initial_energy
     kinetic_link.size = [0.4, kinetic_energy * scale, 0.12]
     potential_link.size = [0.4, potential_energy * scale, 0.12]
-    bar_link_origin = np.array([len(links) - 1, 0.0, 0.0])
+    bar_link_origin = np.array([max(2, len(links)) - 1, 0.0, 0.0])
     potential_link.posn = bar_link_origin + np.array([0, potential_link.size[1] / 2, 0])
     kinetic_link.posn = bar_link_origin + np.array([0, potential_link.size[1] + kinetic_link.size[1] / 2, 0])
-    total_energy = potential_energy + kinetic_energy + dampling_energy
-    print((potential_energy, kinetic_energy, dampling_energy))
-    [link.calibrate_energy(initial_energy / total_energy) for link in links]
+    kinetic_energy_expected = initial_energy - potential_energy - dampling_energy
+    if maintaining_energy and kinetic_energy > 0.01:
+        [link.calibrate_energy((max(kinetic_energy_expected, 0) + kinetic_energy) / kinetic_energy / 2) for link in links]
+    # print('%f, %f;' % (kinetic_energy, potential_energy))
 
 #####################################################
 #### keyPressed():  called whenever a key is pressed
@@ -185,6 +210,8 @@ def calEnergy():
 
 def keyPressed(key, x, y):
     global simRun
+    global number_of_links
+    global dampling, has_ground_force, maintaining_energy
     ch = key.decode('utf-8')
     if ch == ' ':  # ### toggle the simulation
         if simRun == True:
@@ -192,20 +219,32 @@ def keyPressed(key, x, y):
         else:
             simRun = True
     elif ch == chr(27):
-
-                                 # ### ESC key
-
         sys.exit()
     elif ch == 'q':
-
-                                 # ### quit
-
         sys.exit()
     elif ch == 'r':
-
-                                 # ### reset simulation
-
+        createObjects()
         resetSim()
+    elif ch == 'a':
+        number_of_links += 1
+        createObjects()
+        resetSim()
+        print_status()
+    elif ch == 's':
+        number_of_links = max(number_of_links - 1, 1)
+        createObjects()
+        resetSim()
+        print_status()
+    elif ch == 'd':
+        dampling = not dampling
+        print_status()
+    elif ch == 'g':
+        has_ground_force = not has_ground_force
+        print_status()
+    elif ch == 'e':
+        maintaining_energy = not maintaining_energy
+        print_status()
+
 
 
 #####################################################
@@ -217,17 +256,24 @@ def SimWorld():
     global pivot_posn
     global links
     global dampling_energy
-    global dampling
+    global dampling, has_ground_force
+    global ground_link
 
-    deltaTheta = 2.4
     if simRun == False:  # # is simulation stopped?
         return
 
+    # check collision with ground
+    ground_force = 0
+    if has_ground_force and links[-1].trail_posn()[1] < ground_link.posn[1]:
+        k_p = 500
+        k_d = 50
+        ground_force = k_p * (ground_link.posn[1] - links[-1].trail_posn()[1]) - k_d * links[-1].trail_vel()[1]
 
-    rx = np.cos(links[0].theta + math.pi / 2) * links[0].radius()
-    ry = np.sin(links[0].theta + math.pi / 2) * links[0].radius()
-    a = np.zeros((5 * len(links), 5 * len(links)))
-    b = np.zeros(5 * len(links))
+    matrix_size = 5 * len(links)
+    if ground_force != 0:
+        matrix_size += 2
+    a = np.zeros((matrix_size, matrix_size))
+    b = np.zeros(matrix_size)
     for i, link in enumerate(links):
         a[i * 3, i * 3] = link.mass
         a[i * 3 + 1, i * 3 + 1] = link.mass
@@ -251,21 +297,25 @@ def SimWorld():
         b[len(links) * 3 + i * 2:len(links) * 3 + i * 2 + 2] = np.array(
             [-links[i - 1].omega * links[i - 1].omega * links[i - 1].r_trail_x() + link.omega * link.omega * link.r_head_x(),
              -links[i - 1].omega ** 2 * links[i - 1].r_trail_y() + link.omega ** 2 * link.r_head_y()])
+        if i == len(links) - 1 and ground_force != 0:
+            a[len(links) * 3 + i * 2 + 2:len(links) * 3 + i * 2 + 2 + 2, i * 3: i * 3 + 3] = np.array(
+                [[-1, 0, links[i].r_trail_y()],
+                 [0, -1, -links[i].r_trail_x()]])
+            b[len(links) * 3 + i * 2 + 2:len(links) * 3 + i * 2 + 2 + 2] = np.array(
+                [-links[i].omega * links[i].omega * links[i].r_trail_x(),
+                 -links[i].omega ** 2 * links[i].r_trail_y() - ground_force / link.mass])
     for row in range(np.shape(a)[0]):
         for col in range(row + 1, np.shape(a)[1]):
             a[row, col] = a[col, row]
-
     
     x = np.linalg.solve(a, b)
     for i, link in enumerate(links):
         link.acc = np.array([x[i * 3], x[i * 3 + 1], 0])
         link.omega_dot = x[i * 3 + 2]
 
-    calEnergy()
-
-
+    
     for i, link in enumerate(links):
-        links[i     ].color = [random(), random(), random()]
+        links[i].color = [random(), random(), random()]
         links[i].posn += links[i].vel * dT
         links[i].vel += links[i].acc * dT
         links[i].theta += links[i].omega * dT
@@ -279,7 +329,6 @@ def SimWorld():
             links[i].omega = omega_with_dampling
         else:
             links[i].omega = omega_without_dampling
-        # prevent extremely fast when there are many links (> 20)
         if links[i].omega > 10:
             links[i].omega = 10
         if links[i].omega_dot > 10:
@@ -293,11 +342,13 @@ def SimWorld():
         else:
             links[i].correct_head(links[i - 1].trail_posn(), links[i - 1].trail_vel(), links[i - 1].trail_acc())
     
+
+    calEnergy()
     simTime += dT
 
-            # ### draw the updated state
+    # ### draw the updated state
     DrawWorld()
-    printf('simTime=%.2f\n', simTime)
+    # printf('simTime=%.2f\n', simTime)
 
 
 #####################################################
@@ -305,7 +356,7 @@ def SimWorld():
 #####################################################
 
 def DrawWorld():
-    global links, kinetic_link, potential_link
+    global links, kinetic_link, potential_link, has_ground_force
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # Clear The Screen And The Depth Buffer
     glLoadIdentity()
@@ -318,6 +369,8 @@ def DrawWorld():
     [link.draw() for link in links]
     kinetic_link.draw()
     potential_link.draw()
+    if has_ground_force:
+        ground_link.draw()
 
     glutSwapBuffers()  # swap the buffers to display what was just drawn
 
